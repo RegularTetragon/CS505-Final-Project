@@ -71,23 +71,23 @@ function FileToOrientSync(db, filename, callback) {
 }
 function FileToOrientAsync(db, filename, callback) {
     return new Promise(function (res, rej) {
+        var statement = { subtype: "ODatabaseSession", value: db };
         var csvParser = new csv_1.default.parse.Parser({
             delimiter: ",",
             from_line: 2
         });
-        var actions = [];
         fs_1.default.createReadStream(filename).pipe(csvParser);
         csvParser.on("error", function (err) { return rej(err); });
-        csvParser.on("end", function () { return res(Promise.all(actions)); });
-        csvParser.on("close", function () { return res(Promise.all(actions)); });
+        csvParser.on("end", function () { return statement.subtype == "OStatement" ? res(statement.value.all()) : res([]); });
+        csvParser.on("close", function () { return statement.subtype == "OStatement" ? res(statement.value.all()) : res([]); });
         csvParser.on("data", function (data) {
-            actions.push(callback(db, data));
+            statement = { subtype: "OStatement", value: callback(statement, data) };
         });
     });
 }
 function resetOrient(orient) {
     return __awaiter(this, void 0, void 0, function () {
-        var db, location;
+        var db, location, zipToLocationIndex, locationRecords;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
@@ -129,12 +129,26 @@ function resetOrient(orient) {
                 case 6:
                     _a.sent();
                     console.log("Populating OrientDB zipcodes...");
+                    zipToLocationIndex = new Map();
                     return [4 /*yield*/, FileToOrientAsync(db, "./kyzipdetails.csv", function (t, _a) {
                             var zip = _a[0], zip_name = _a[1], city = _a[2], state = _a[3], county = _a[4];
-                            return t.create('VERTEX', 'Location').set({ zip_code: zip }).one();
-                        })];
+                            return t.value.create('VERTEX', 'Location').set({ zip_code: zip });
+                        })
+                        /*for (let locationRecord of locationRecords) {
+                            let rid = locationRecord["@rid"]
+                            console.log(locationRecord)
+                            //zipToLocationIndex.set(zip, "#"+rid!.cluster + ":" + rid!.position)
+                        }*/
+                    ];
                 case 7:
-                    _a.sent();
+                    locationRecords = _a.sent();
+                    /*for (let locationRecord of locationRecords) {
+                        let rid = locationRecord["@rid"]
+                        console.log(locationRecord)
+                        //zipToLocationIndex.set(zip, "#"+rid!.cluster + ":" + rid!.position)
+                    }*/
+                    console.log(locationRecords);
+                    console.log(zipToLocationIndex);
                     console.log("Creating zipcodes index...");
                     return [4 /*yield*/, db.index.create({
                             type: "UNIQUE",
@@ -169,11 +183,10 @@ function resetOrient(orient) {
                     console.log("Populating OrientDB distances...");
                     return [4 /*yield*/, FileToOrientAsync(db, "./kyzipdistance.csv", function (t, _a) {
                             var zipcode_from = _a[0], zipcode_to = _a[1], distance = _a[2];
-                            return t.create('EDGE', 'Distance')
-                                .from(t.select().from('Location').where({ 'zip_code': zipcode_from }))
-                                .to(t.select().from('Location').where({ 'zip_code': zipcode_to }))
-                                .set({ distance: distance })
-                                .one();
+                            return t.value.create('EDGE', 'Distance')
+                                .from(zipToLocationIndex.get(zipcode_from))
+                                .to(zipToLocationIndex.get(zipcode_to))
+                                .set({ distance: distance });
                         })
                         /*
                         console.log("Populating OrientDB hospital locations...")
@@ -280,11 +293,11 @@ function main() {
                                     throw "Not implemented";
                                 case 3:
                                     e_1 = _a.sent();
-                                    console.error(e_1);
                                     res.status(400).send({
                                         reset_status_code: '0',
                                         error: e_1
                                     });
+                                    console.error(e_1);
                                     return [3 /*break*/, 5];
                                 case 4:
                                     db_reset_semaphore--;

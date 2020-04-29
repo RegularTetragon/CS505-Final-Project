@@ -2,11 +2,12 @@ import express from "express"
 
 import { PatientStatusCode, positiveCodes, PatientData } from "./types"
 import { connect } from "./subjects";
-import orientdb, { OServer, ORecord, OStatement, OrientDBClient, ODatabaseSession, ODatabaseTransaction, ODatabaseSessionOptions, DropDatabaseOptions, OClassProperty, OClass } from "orientjs"
+import orientdb, { OServer, ORecord, OStatement, OrientDBClient, ODatabaseSession, ODatabaseTransaction, ODatabaseSessionOptions, DropDatabaseOptions, OClassProperty, OClass, ORID, OQuery, ODB } from "orientjs"
 import csv from "csv"
 import fs from "fs"
 import { pipeline } from "stream";
 import { create } from "domain";
+import { stringify } from "querystring";
     
 
 const orientConfig : orientdb.ServerConfig = {
@@ -37,24 +38,33 @@ function FileToOrientSync<T>(db : ODatabaseSession, filename : string, callback 
         })
     })
 }
+ 
+type DiscriminatedStatementlike = {
+    value : ODatabaseSession,
+    subtype : "ODatabaseSession"
+} | {
+    value : OStatement
+    subtype : "OStatement"
+}
 
-function FileToOrientAsync<T>(db : ODatabaseSession, filename : string, callback : (transaction : ODatabaseSession, current : T)=>any) : Promise<any[]> {
+function FileToOrientAsync<T>(db : ODatabaseSession, filename : string, callback : (transaction : DiscriminatedStatementlike, current : T)=>OStatement) : Promise<ORecord[]> {
     return new Promise((res,rej) => {
+        let statement : DiscriminatedStatementlike = {subtype: "ODatabaseSession", value: db};
+        
         const csvParser = new csv.parse.Parser({
             delimiter: ",",
             from_line: 2
         })
-        let actions : Promise<any>[] = []
         fs.createReadStream(filename).pipe(csvParser)
         csvParser.on("error", (err)=>rej(err))
-        csvParser.on("end", ()=>res(Promise.all(actions)))
-        csvParser.on("close", ()=>res(Promise.all(actions)))
+        csvParser.on("end", ()=>statement.subtype == "OStatement" ? res(statement.value.all()) : res([]));
+
+        csvParser.on("close", ()=>statement.subtype == "OStatement" ? res(statement.value.all()) : res([]));
         csvParser.on("data", (data) => {
-            actions.push(callback(db, data))
+            statement = {subtype: "OStatement", value: callback(statement, data)}
         })
     })
 }
-
 
 async function resetOrient(orient : OrientDBClient) {
     console.log("Resetting orientDb")
@@ -91,10 +101,20 @@ async function resetOrient(orient : OrientDBClient) {
         ]
     )
     console.log("Populating OrientDB zipcodes...")
-    await FileToOrientAsync<string[]>(db, "./kyzipdetails.csv",
+    let zipToLocationIndex = new Map<string, string>();
+    let locationRecords = await FileToOrientAsync<ORecord[]>(db, "./kyzipdetails.csv",
         (t, [zip,zip_name,city,state,county])=>
-            t.create('VERTEX', 'Location').set({zip_code:zip}).one()
+            t.value.create('VERTEX', 'Location').set({zip_code:zip})
     )
+
+    /*for (let locationRecord of locationRecords) {
+        let rid = locationRecord["@rid"]
+        console.log(locationRecord)
+        //zipToLocationIndex.set(zip, "#"+rid!.cluster + ":" + rid!.position)
+    }*/
+    console.log(locationRecords)
+    
+    console.log(zipToLocationIndex)
     console.log("Creating zipcodes index...")
     await db.index.create({
         type: "UNIQUE",
@@ -133,11 +153,10 @@ async function resetOrient(orient : OrientDBClient) {
     console.log("Populating OrientDB distances...")
     await FileToOrientAsync<string[]>(db, "./kyzipdistance.csv",
         (t, [zipcode_from, zipcode_to, distance]) =>
-            t.create('EDGE', 'Distance')
-                .from(t.select().from('Location').where({'zip_code':zipcode_from}))
-                .to(t.select().from('Location').where({'zip_code':zipcode_to}))
+            t.value.create('EDGE', 'Distance')
+                .from(zipToLocationIndex.get(zipcode_from))
+                .to(zipToLocationIndex.get(zipcode_to))
                 .set({distance: distance})
-                .one()
         )
     /*
     console.log("Populating OrientDB hospital locations...")
@@ -215,13 +234,13 @@ async function main() {
                     throw "Not implemented"
                 }
                 catch (e) {
-                    console.error(e);
                     res.status(400).send(
                         {
                             reset_status_code: '0',
                             error: e
                         }
                     );
+                    console.error(e);
                 }
                 finally {
                     db_reset_semaphore--;

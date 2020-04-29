@@ -1,0 +1,46 @@
+@App:name('cs505-final')
+@App:description('Description of the plan')
+
+
+@sink(type = 'http', publisher.url = "http://localhost:8088/siddhi/zip_alert", 
+	@map(type = 'json'))
+
+define stream zip_alert (zip_code int, quantity long);
+
+
+@sink(
+    type = 'http',
+    publisher.url = "http://localhost:8088/siddhi/state_alert", 
+	@map(type = 'json'))
+define stream state_alert (in_alert bool);
+
+
+
+@source(type = 'rabbitmq', uri = "amqp://student:student01@128.163.202.61/patient_feed", exchange.name = "patient_data", exchange.type = "topic", routing.key = "#", exchange.durable.enabled = "false", queue.name = "10991225", 
+	@map(type = 'json'))
+@sink(
+    type = 'http',
+    publisher.url = "http://localhost:8088/siddhi/rabbit", 
+	@map(type = 'json'))
+@info(name = "patient")
+define stream patient_data (first_name string, last_name string, mrn string, zip_code int, patient_status_code int);
+
+--establish zip alert
+@info(name = 'query1')
+from patient_data#window.time(15 sec) 
+select zip_code, count(
+ patient_status_code == 2
+ or
+ patient_status_code == 5
+ or
+ patient_status_code == 6
+ ) as quantity 
+	group by zip_code 
+	having quantity > 15 
+insert into zip_alert;
+
+--establish statewide alert
+@info(name = 'query2')
+from zip_alert 
+select count(zip_code) > 5 as in_alert 
+insert into state_alert;

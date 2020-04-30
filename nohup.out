@@ -1,0 +1,11 @@
+Initializing orientDb
+Dropping database
+Creating database
+Creating location
+Creating location index
+Creating hospital
+Creating distance
+OrientDB schema established.
+Populating OrientDB locations...
+Populating OrientDB hospital locations...
+Populating OrientDB distances...

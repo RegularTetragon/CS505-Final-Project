@@ -12,13 +12,51 @@ export function FileToOrientAsync<T>(db : ODatabaseSession, filename : string, c
             from_line: 2
         })
         let actions : Promise<any>[] = []
-        fs.createReadStream(filename).pipe(csvParser)
+        let file = fs.createReadStream(filename).pipe(csvParser)
         csvParser.on("error", (err)=>rej(err))
         csvParser.on("end", ()=>res(Promise.all(actions)))
         csvParser.on("close", ()=>res(Promise.all(actions)))
-        csvParser.on("data", (data) => {
+        let pauses = 1;
+        csvParser.on("data", async (data) => {
+            if (actions.length > 512 * pauses) {
+                pauses++;
+                file.pause();
+                console.log("Overflow. Waiting for queued actions to complete...")
+                await Promise.all(actions)
+                console.log("Resume...")
+                file.resume();
+            }
             actions.push(callback(db, data))
         })
+        
+    })
+}
+
+export function FileToOrientAsync_<T>(db : ODatabaseSession, filename : string, callback : (transaction : ODatabaseSession, current : T)=>any) : Promise<null> {
+    return new Promise((res,rej) => {
+        const csvParser = new csv.parse.Parser({
+            delimiter: ",",
+            from_line: 2
+        })
+        let actions : Promise<any>[] = []
+        let file = fs.createReadStream(filename).pipe(csvParser)
+        csvParser.on("error", (err)=>rej(err))
+        csvParser.on("end", ()=>res())
+        csvParser.on("close", ()=>res())
+        let pauses = 1;
+        csvParser.on("data", async (data) => {
+            if (actions.length > 512 * pauses) {
+                pauses++;
+                file.pause();
+                console.log("Overflow. Waiting for queued actions to complete...")
+                await Promise.all(actions)
+                actions = []
+                console.log("Resume...")
+                file.resume();
+            }
+            actions.push(callback(db, data))
+        })
+        
     })
 }
 
@@ -31,7 +69,7 @@ export const orientConfig : orientdb.ServerConfig = {
 export const dblogin : ODatabaseSessionOptions = {
     name: 'cs505-final',
     username: 'root',
-    password: 'rootpwd'
+    password: '10991225'
 }
 
 async function createPatient(db : ODatabaseSession) {
@@ -150,7 +188,9 @@ export async function schemifyOrient(orient : OrientDBClient) {
 
 export async function populateOrient(orient : OrientDBClient) {
     let db = await orient.session(dblogin);
+    
     console.log("Populating OrientDB locations...")
+    
     let locationRecords : ORecord[] = await FileToOrientAsync<string[]>(db, "./kyzipdetails.csv",
         (t, [zip,zip_name,city,state,county])=>
             t.create('VERTEX', 'Location').set({zip_code:zip}).one()
@@ -163,7 +203,7 @@ export async function populateOrient(orient : OrientDBClient) {
     }
 
     console.log("Populating OrientDB hospital locations...")
-    await FileToOrientAsync<string[]>(db, "./hospitals.csv",
+    await FileToOrientAsync_<string[]>(db, "./hospitals.csv",
         (transaction, [ID,NAME,ADDRESS,CITY,STATE,ZIP,TYPE,BEDS,COUNTY,COUNTYFIPS,COUNTRY,LATITUDE,LONGITUDE,NAICS_CODE,WEBSITE,OWNER,TRAUMA,HELIPAD]) =>
             transaction.create('VERTEX', 'Hospital').set({
                 beds: BEDS,
@@ -175,7 +215,7 @@ export async function populateOrient(orient : OrientDBClient) {
 
     console.log("Populating OrientDB distances...")
     //This takes forever so just return.
-    await FileToOrientAsync<string[]>(db, "./kyzipdistance.csv",
+    await FileToOrientAsync_<string[]>(db, "./kyzipdistance.csv",
         (t, [zipcode_from, zipcode_to, distance]) => t.create('EDGE', 'Distance')
             .from(zipcodeMap.get(zipcode_from))
             .to(zipcodeMap.get(zipcode_to))

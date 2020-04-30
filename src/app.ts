@@ -12,6 +12,7 @@ let db_reset_semaphore = 0;
 
 async function pipeRabbitToOrient(orient : OrientDBClient) {
     let db = await orient.session(dblogin)
+    let actions = []
     let rabbit = await rabbitmq((patientData) => {
         db.update('Patient').set({
             location: db.select().from('Location').where({'zip_code':patientData.zip_code}),
@@ -29,15 +30,14 @@ async function main() {
     
     const app = express();
     const orient = await OrientDBClient.connect(orientConfig)
-    await initializeOrient(orient);
-    await schemifyOrient(orient);
-    await populateOrient(orient);
-
-    pipeRabbitToOrient(orient)
+    //await initializeOrient(orient);
+    //await schemifyOrient(orient);
+    //await populateOrient(orient);
+    await resetOrient(orient);
     
 
     try {
-        //await connect(console.log)
+        pipeRabbitToOrient(orient)
     }
     catch (e) {
         console.log(e)

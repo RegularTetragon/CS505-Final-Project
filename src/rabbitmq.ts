@@ -1,5 +1,6 @@
 import { PatientData, positiveCodes, ZIP_ALERT_AMOUNT } from "./types"
 import amqp from "amqplib"
+import {Observable, Subject} from "rxjs"
 
 let ampqcredentials : amqp.Options.Connect = {
     hostname: '128.163.202.61',
@@ -9,10 +10,11 @@ let ampqcredentials : amqp.Options.Connect = {
 }
 
 
-export async function rabbitmq(callback : ((next: PatientData) => any), error? : ((arg0: any)=>any)) {
+export async function rabbitmq() : Promise<Subject<PatientData>> {
     const connection = await amqp.connect(ampqcredentials)
     console.log("Connected to RabbitMq")
     const channel = await connection.createChannel()
+    let subject = new Subject<PatientData>()
     await channel.assertExchange('patient_data', 'topic', {durable:false})
     await channel.assertQueue("patient_data_q", {durable: false})
     await channel.purgeQueue("patient_data_q")
@@ -21,11 +23,11 @@ export async function rabbitmq(callback : ((next: PatientData) => any), error? :
         (msg) => {
             const patientData : PatientData[] = JSON.parse(<string><unknown>msg?.content);
             for (const patientDatum of patientData) {
-                callback(patientDatum)
+                subject.next(patientDatum)
             }
         }
     )
-    
-    return channel
+    subject.toPromise().then(()=>channel.close())
+    return subject
     
 }

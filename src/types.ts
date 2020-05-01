@@ -23,6 +23,6 @@ export interface PatientData {
     first_name : string,
     last_name : string,
     mrn : string,
-    zip_code : string,
+    zip_code : number,
     patient_status_code : PatientStatusCode
 }

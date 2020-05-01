@@ -89,6 +89,7 @@ async function createPatient(db : ODatabaseSession) {
 export async function resetOrient(orient : OrientDBClient) {
     const db = await orient.session(dblogin)
     console.log("Creating patient")
+    await db.delete("VERTEX").from("Patient").one();
     await db.class.drop("Patient", {ifexist: true});
     return await createPatient(db)
 }
@@ -146,15 +147,6 @@ export async function schemifyOrient(orient : OrientDBClient) {
             }
         ]
     )
-    await hospital.property.create(
-        [
-            {
-                name: 'location',
-                type: 'Link',
-                linkedClass: 'Location'
-            }
-        ]
-    )
 
     console.log("Creating distance");
     let distance = await db.class.create("Distance", "E")
@@ -172,6 +164,23 @@ export async function schemifyOrient(orient : OrientDBClient) {
             }
         ]
     )
+
+    let at = await db.class.create("LocatedAt", "E")
+    await at.property.create(
+        [
+            {
+                name : 'in',
+                type: 'Link',
+                linkedClass: 'V'
+            },
+            {
+                name : 'out',
+                type: 'Link',
+                linkedClass: 'Location'
+            }
+        ]
+    )
+
     await distance.property.create(
         {
             name : 'distance',
@@ -204,13 +213,15 @@ export async function populateOrient(orient : OrientDBClient) {
 
     console.log("Populating OrientDB hospital locations...")
     await FileToOrientAsync_<string[]>(db, "./hospitals.csv",
-        (transaction, [ID,NAME,ADDRESS,CITY,STATE,ZIP,TYPE,BEDS,COUNTY,COUNTYFIPS,COUNTRY,LATITUDE,LONGITUDE,NAICS_CODE,WEBSITE,OWNER,TRAUMA,HELIPAD]) =>
-            transaction.create('VERTEX', 'Hospital').set({
+        async (transaction, [ID,NAME,ADDRESS,CITY,STATE,ZIP,TYPE,BEDS,COUNTY,COUNTYFIPS,COUNTRY,LATITUDE,LONGITUDE,NAICS_CODE,WEBSITE,OWNER,TRAUMA,HELIPAD]) => {
+            let hospitalDoc = await transaction.create('VERTEX', 'Hospital').set({
                 beds: BEDS,
                 id: ID,
-                name: NAME,
-                location: zipcodeMap.get(ZIP)
-            }).one()
+                name: NAME
+            }).one<ORecord>()
+            await transaction.create('EDGE', 'LocatedAt').from(zipcodeMap.get(ZIP)).to(hospitalDoc["@rid"]).one()
+            return hospitalDoc;
+        }
     );
 
     console.log("Populating OrientDB distances...")
